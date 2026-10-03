@@ -1,0 +1,14 @@
+# WireGuard profilleri private key icerir
+*.conf
+
+# Kisisel kurallar; ornek icin basicsplit.example.toml
+basicsplit.toml
+
+# Derleme ciktilari ve log
+*.exe
+*.exe~
+*.log
+
+# WinDivert dosyalari repoya konmaz, README'deki adresten indirilir
+WinDivert.dll
+WinDivert64.sys

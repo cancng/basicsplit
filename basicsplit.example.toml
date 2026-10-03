@@ -1,0 +1,16 @@
+# Bu dosyayi "basicsplit.toml" adiyla kopyalayip duzenle.
+
+# WireGuard profili (bu dosyaya gore goreli yol)
+wireguard = "profil.conf"
+
+# Istege bagli yerel SOCKS5 proxy (acmak icin satirin basindaki # isaretini sil)
+# listen = "127.0.0.1:1080"
+
+# Her kural bir exe icindir. Bir alan adi yazinca alt alan adlari da dahil olur.
+# "domains" hic yazilmazsa o exe'nin tum TCP trafigi tunelden gecer.
+[[rule]]
+exe = "chrome.exe"
+domains = [
+  "wowhead.com",
+  "zamimg.com",
+]
