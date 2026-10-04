@@ -6,6 +6,7 @@ basicsplit.toml
 
 # Derleme ciktilari ve log
 *.exe
+/basicsplit
 *.exe~
 *.log
 

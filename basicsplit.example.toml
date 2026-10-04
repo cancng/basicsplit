@@ -6,8 +6,14 @@ wireguard = "profil.conf"
 # Istege bagli yerel SOCKS5 proxy (acmak icin satirin basindaki # isaretini sil)
 # listen = "127.0.0.1:1080"
 
-# Her kural bir exe icindir. Bir alan adi yazinca alt alan adlari da dahil olur.
-# "domains" hic yazilmazsa o exe'nin tum TCP trafigi tunelden gecer.
+# Sadece macOS: QUIC (UDP 443) tum programlar icin reddedilir ki tarayicilar
+# TCP'ye gecsin. Buna dokunulmasin istersen asagidaki satiri ac; o zaman QUIC
+# kullanan siteler tunele girmez.
+# allow_quic = true
+
+# Her kural bir program icindir. Bir alan adi yazinca alt alan adlari da dahil olur.
+# "domains" hic yazilmazsa o programin tum TCP trafigi tunelden gecer.
+# macOS'ta exe, uygulamanin adidir: exe = "Google Chrome"
 [[rule]]
 exe = "chrome.exe"
 domains = [

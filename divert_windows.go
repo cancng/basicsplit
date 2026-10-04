@@ -245,3 +245,32 @@ func (r *redirector) accept() {
 		go r.serve(c)
 	}
 }
+
+// serve hands one redirected connection to relay, with the destination it
+// was originally going to.
+func (r *redirector) serve(c net.Conn) {
+	defer c.Close()
+
+	peer := c.RemoteAddr().(*net.TCPAddr).AddrPort()
+	r.mu.Lock()
+	e := r.nat[peer.Port()]
+	if e != nil && e.dstIP == peer.Addr().Unmap() {
+		e.accepted = true
+	} else {
+		e = nil
+	}
+	r.mu.Unlock()
+	if e == nil {
+		return // not one of ours (e.g. someone on the LAN poking the port)
+	}
+	// keep the entry briefly so the closing packets still get rewritten
+	defer time.AfterFunc(10*time.Second, func() {
+		r.mu.Lock()
+		if r.nat[peer.Port()] == e {
+			delete(r.nat, peer.Port())
+		}
+		r.mu.Unlock()
+	})
+
+	relay(c, r.tnet, e.rule, netip.AddrPortFrom(e.dstIP, e.dstPort))
+}

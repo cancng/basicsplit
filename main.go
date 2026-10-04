@@ -7,15 +7,11 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync/atomic"
 	"time"
-	"unsafe"
 
-	"fyne.io/systray"
 	"github.com/BurntSushi/toml"
-	"golang.org/x/sys/windows"
 )
 
 type Rule struct {
@@ -26,11 +22,17 @@ type Rule struct {
 type Config struct {
 	WireGuard string `toml:"wireguard"`
 	Listen    string `toml:"listen"`
+	// AllowQUIC (macOS only) leaves UDP 443 alone. There it can only be
+	// refused for every program at once, not just the exes in the rules.
+	AllowQUIC bool   `toml:"allow_quic"`
 	Rules     []Rule `toml:"rule"`
 }
 
 var (
 	cfgPath string
+	logPath string
+	// debug logs every captured connection, not just the tunneled ones
+	debug bool
 	// current is swapped whenever the config file changes on disk
 	current atomic.Pointer[Config]
 	// enabled is the tray's on/off switch; when off, no new connections are
@@ -40,6 +42,9 @@ var (
 	tunnelUp  atomic.Bool
 	trayReady atomic.Bool
 	quitting  atomic.Bool
+
+	// cleanup undoes system-wide changes before the process exits
+	cleanup = func() {}
 )
 
 // match reports whether host is one of the rule's domains or a subdomain of
@@ -99,34 +104,13 @@ func loadConfig(path string) (*Config, error) {
 	return &cfg, nil
 }
 
-func messageBox(msg string, flags uint32) {
-	title, _ := windows.UTF16PtrFromString("basicsplit")
-	text, _ := windows.UTF16PtrFromString(msg)
-	windows.MessageBox(0, text, title, flags)
-}
-
 // fatal replaces log.Fatal: there is no console, so show the error.
 func fatal(format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
 	log.Print(msg)
-	messageBox(msg, windows.MB_ICONERROR)
+	cleanup()
+	showError(msg)
 	os.Exit(1)
-}
-
-// elevate relaunches the program as administrator if needed; WinDivert
-// requires it.
-func elevate(exe string) {
-	if windows.GetCurrentProcessToken().IsElevated() {
-		return
-	}
-	verb, _ := windows.UTF16PtrFromString("runas")
-	file, _ := windows.UTF16PtrFromString(exe)
-	args, _ := windows.UTF16PtrFromString(windows.ComposeCommandLine(os.Args[1:]))
-	dir, _ := windows.UTF16PtrFromString(filepath.Dir(exe))
-	if err := windows.ShellExecute(0, verb, file, args, dir, windows.SW_SHOWNORMAL); err != nil {
-		fatal("Yonetici yetkisi alinamadi: %v", err)
-	}
-	os.Exit(0)
 }
 
 func main() {
@@ -137,20 +121,21 @@ func main() {
 	exeDir := filepath.Dir(exe)
 
 	flag.StringVar(&cfgPath, "config", filepath.Join(exeDir, "basicsplit.toml"), "kural dosyasi")
+	flag.BoolVar(&debug, "debug", false, "yakalanan her baglantiyi logla")
 	flag.Parse()
 	if cfgPath, err = filepath.Abs(cfgPath); err != nil {
 		fatal("%v", err)
 	}
 
+	logPath = filepath.Join(exeDir, "basicsplit.log")
+
 	elevate(exe)
 
-	name, _ := windows.UTF16PtrFromString(`Global\basicsplit`)
-	if _, err := windows.CreateMutex(nil, false, name); err == windows.ERROR_ALREADY_EXISTS {
-		messageBox("basicsplit zaten calisiyor (sistem tepsisine bak).", windows.MB_ICONINFORMATION)
+	if !singleInstance() {
+		showInfo("basicsplit zaten calisiyor (sistem tepsisine bak).")
 		return
 	}
 
-	logPath := filepath.Join(exeDir, "basicsplit.log")
 	if st, err := os.Stat(logPath); err == nil && st.Size() > 1<<20 {
 		os.Remove(logPath)
 	}
@@ -168,71 +153,8 @@ func main() {
 	// the tunnel must not depend on the tray icon
 	go run()
 
-	waitForTaskbar()
-	systray.Run(func() { onReady(logPath) }, nil)
-	if !quitting.Load() {
-		log.Print("tray simgesi olusturulamadi, simgesiz devam ediliyor")
-		select {}
-	}
-}
-
-// NOTIFYICONDATAW
-type notifyIconData struct {
-	Size             uint32
-	Wnd              uintptr
-	ID, Flags        uint32
-	CallbackMessage  uint32
-	Icon             uintptr
-	Tip              [128]uint16
-	State, StateMask uint32
-	Info             [256]uint16
-	Version          uint32
-	InfoTitle        [64]uint16
-	InfoFlags        uint32
-	GUID             windows.GUID
-	BalloonIcon      uintptr
-}
-
-// waitForTaskbar blocks until Explorer accepts tray icons. Right after logon
-// Shell_NotifyIcon fails while Explorer is still starting, and the systray
-// package gives up for good on the first failure. So probe with a hidden
-// throwaway icon until adding one works.
-func waitForTaskbar() {
-	const (
-		nimAdd, nimDelete = 0, 2
-		nifState          = 8
-		nisHidden         = 1
-	)
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
-
-	user32 := windows.NewLazySystemDLL("user32.dll")
-	shellNotifyIcon := windows.NewLazySystemDLL("shell32.dll").NewProc("Shell_NotifyIconW")
-
-	class, _ := windows.UTF16PtrFromString("STATIC")
-	hwndMessage := ^uintptr(2) // HWND_MESSAGE (-3)
-	hwnd, _, _ := user32.NewProc("CreateWindowExW").Call(0, uintptr(unsafe.Pointer(class)),
-		0, 0, 0, 0, 0, 0, hwndMessage, 0, 0, 0)
-	if hwnd == 0 {
-		return
-	}
-	defer user32.NewProc("DestroyWindow").Call(hwnd)
-
-	nid := notifyIconData{Wnd: hwnd, ID: 1, Flags: nifState, State: nisHidden, StateMask: nisHidden}
-	nid.Size = uint32(unsafe.Sizeof(nid))
-	for i := 0; i < 120; i++ {
-		ok, _, _ := shellNotifyIcon.Call(nimAdd, uintptr(unsafe.Pointer(&nid)))
-		// a failed add can still leave the icon behind
-		shellNotifyIcon.Call(nimDelete, uintptr(unsafe.Pointer(&nid)))
-		if ok != 0 {
-			if i > 0 {
-				log.Printf("tray %d sn sonra hazir oldu", i)
-			}
-			return
-		}
-		time.Sleep(time.Second)
-	}
-	log.Print("tray 2 dakikada hazir olmadi")
+	runUI(logPath)
+	cleanup()
 }
 
 // run brings everything up and then stays in the packet loop.
