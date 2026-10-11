@@ -2,26 +2,64 @@ package main
 
 import (
 	"bufio"
-	"fmt"
+	"encoding/json"
+	"log"
 	"net"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 )
 
-// Any local user may connect; the commands only switch capturing on and off
-// or stop the engine.
 const controlSocket = "/var/run/basicsplit.sock"
 
-// serveControl answers the tray process. Each connection carries one command
-// (status, on, off or quit) and gets the resulting state back.
+var (
+	started sync.Once
+	running atomic.Bool
+	// failure is the first fatal error, if there was one
+	failure atomic.Pointer[string]
+)
+
+type status struct {
+	// idle, starting, running or failed
+	State   string `json:"state"`
+	Enabled bool   `json:"enabled"`
+	Error   string `json:"error,omitempty"`
+}
+
+func currentStatus() status {
+	s := status{State: "idle", Enabled: enabled.Load()}
+	switch msg := failure.Load(); {
+	case msg != nil:
+		s.State, s.Error = "failed", *msg
+	case tunnelUp.Load():
+		s.State = "running"
+	case running.Load():
+		s.State = "starting"
+	}
+	return s
+}
+
+// serveControl answers the app. Each connection carries one command and gets
+// the resulting status back as a line of JSON:
+//
+//	status  just report
+//	start   read the config and bring the tunnel and the capture up
+//	stop    take everything down again
+//	on/off  resume or pause capturing new connections
+//
+// The engine waits idle until it is started. Stopping it means exiting:
+// launchd starts a fresh, idle one right away, which is simpler and safer
+// than unwinding the tunnel in place.
 func serveControl() error {
 	os.Remove(controlSocket)
 	ln, err := net.Listen("unix", controlSocket)
 	if err != nil {
 		return err
 	}
-	os.Chmod(controlSocket, 0o666)
+	os.Chown(controlSocket, ownerUID, -1)
+	os.Chmod(controlSocket, 0o600)
 	for {
 		c, err := ln.Accept()
 		if err != nil {
@@ -33,38 +71,33 @@ func serveControl() error {
 			line, _ := bufio.NewReader(c).ReadString('\n')
 			cmd := strings.TrimSpace(line)
 			switch cmd {
+			case "start":
+				started.Do(start)
 			case "on":
 				enabled.Store(true)
 			case "off":
 				enabled.Store(false)
 			}
-			fmt.Fprintf(c, "%t %t\n", tunnelUp.Load(), enabled.Load())
-			if cmd == "quit" {
+			json.NewEncoder(c).Encode(currentStatus())
+			if cmd == "stop" && running.Load() {
+				log.Print("stopped")
 				cleanup()
-				os.Remove(controlSocket)
 				os.Exit(0)
 			}
 		}()
 	}
 }
 
-// control sends a command to the engine and takes over the state it reports.
-func control(cmd string) error {
-	c, err := net.DialTimeout("unix", controlSocket, time.Second)
+func start() {
+	running.Store(true)
+	cfg, err := loadConfig(cfgPath)
 	if err != nil {
-		return err
+		msg := "Could not read the config: " + err.Error()
+		log.Print(msg)
+		failure.Store(&msg)
+		return
 	}
-	defer c.Close()
-	c.SetDeadline(time.Now().Add(2 * time.Second))
-	if _, err := fmt.Fprintln(c, cmd); err != nil {
-		return err
-	}
-	var up, on bool
-	if _, err := fmt.Fscan(c, &up, &on); err != nil {
-		return err
-	}
-	tunnelUp.Store(up)
-	enabled.Store(on)
-	setTrayState()
-	return nil
+	current.Store(cfg)
+	enabled.Store(true)
+	go run()
 }

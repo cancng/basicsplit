@@ -51,7 +51,7 @@ type redirector struct {
 func startRedirector(tnet *netstack.Net) (*redirector, error) {
 	pf, err := os.OpenFile("/dev/pf", os.O_RDWR, 0)
 	if err != nil {
-		return nil, fmt.Errorf("/dev/pf acilamadi: %w", err)
+		return nil, fmt.Errorf("could not open /dev/pf: %w", err)
 	}
 	if err := checkMainRuleset(); err != nil {
 		return nil, err
@@ -67,7 +67,7 @@ func startRedirector(tnet *netstack.Net) (*redirector, error) {
 		r.ipv6 = true
 		go r.accept(ln6)
 	} else {
-		log.Printf("IPv6 yakalanmayacak: %v", err)
+		log.Printf("IPv6 will not be captured: %v", err)
 	}
 
 	// rules left behind by a crash point at a port nobody listens on
@@ -142,7 +142,7 @@ func (r *redirector) apply(rules string) error {
 		if _, err := pfctl(nil, "-a", pfAnchor, "-F", "all"); err != nil {
 			return err
 		}
-		log.Print("pf kurallari kaldirildi")
+		log.Print("pf rules removed")
 	} else {
 		if r.token == "" {
 			out, err := pfctl(nil, "-E")
@@ -151,14 +151,14 @@ func (r *redirector) apply(rules string) error {
 			}
 			m := regexp.MustCompile(`Token : (\d+)`).FindSubmatch(out)
 			if m == nil {
-				return fmt.Errorf("pfctl -E: token yok: %s", out)
+				return fmt.Errorf("pfctl -E: no token: %s", out)
 			}
 			r.token = string(m[1])
 		}
 		if _, err := pfctl([]byte(rules), "-a", pfAnchor, "-f", "-"); err != nil {
 			return err
 		}
-		log.Print("pf kurallari yuklendi")
+		log.Print("pf rules loaded")
 	}
 	r.loaded = rules
 	return nil
@@ -202,7 +202,7 @@ func checkMainRuleset() error {
 			return err
 		}
 		if !bytes.Contains(out, []byte(c.want)) {
-			return fmt.Errorf("pf ana kural setinde %s yok; 'sudo pfctl -f /etc/pf.conf' ile varsayilani yukle", c.want)
+			return fmt.Errorf("the main pf ruleset lacks %s; load the default one with 'sudo pfctl -f /etc/pf.conf'", c.want)
 		}
 	}
 	return nil
@@ -228,7 +228,7 @@ func (r *redirector) serve(c net.Conn) {
 	}
 	rule, owners := ruleForConn(src)
 	if debug {
-		log.Printf("DEBUG  %v -> %v  sahipler=%q  kural=%v", src, dst, owners, rule != nil)
+		log.Printf("DEBUG  %v -> %v  owners=%q  rule=%v", src, dst, owners, rule != nil)
 	}
 	relay(c, r.tnet, rule, dst)
 }
@@ -277,5 +277,5 @@ func (r *redirector) origDst(src, local netip.AddrPort) (netip.AddrPort, error) 
 		}
 		return dst, nil
 	}
-	return netip.AddrPort{}, errors.New("pf state yok")
+	return netip.AddrPort{}, errors.New("no pf state")
 }

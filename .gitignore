@@ -1,15 +1,17 @@
-# WireGuard profilleri private key icerir
+# WireGuard profiles hold a private key
 *.conf
 
-# Kisisel kurallar; ornek icin basicsplit.example.toml
+# Personal rules; see basicsplit.example.toml for a sample
 basicsplit.toml
 
-# Derleme ciktilari ve log
+# Build output and the log
 *.exe
 /basicsplit
+/build/
+/macos/.build/
 *.exe~
 *.log
 
-# WinDivert dosyalari repoya konmaz, README'deki adresten indirilir
+# WinDivert files stay out of the repository; download them from the address in the README
 WinDivert.dll
 WinDivert64.sys

@@ -1,19 +1,14 @@
-# Bu dosyayi "basicsplit.toml" adiyla kopyalayip duzenle.
+# Windows: copy this file to "basicsplit.toml" and edit it.
+# (On macOS the app's Settings window takes care of this.)
 
-# WireGuard profili (bu dosyaya gore goreli yol)
-wireguard = "profil.conf"
+# WireGuard profile (path relative to this file)
+wireguard = "profile.conf"
 
-# Istege bagli yerel SOCKS5 proxy (acmak icin satirin basindaki # isaretini sil)
+# Optional local SOCKS5 proxy (remove the leading # to turn it on)
 # listen = "127.0.0.1:1080"
 
-# Sadece macOS: QUIC (UDP 443) tum programlar icin reddedilir ki tarayicilar
-# TCP'ye gecsin. Buna dokunulmasin istersen asagidaki satiri ac; o zaman QUIC
-# kullanan siteler tunele girmez.
-# allow_quic = true
-
-# Her kural bir program icindir. Bir alan adi yazinca alt alan adlari da dahil olur.
-# "domains" hic yazilmazsa o programin tum TCP trafigi tunelden gecer.
-# macOS'ta exe, uygulamanin adidir: exe = "Google Chrome"
+# One rule per program. A domain also covers its subdomains.
+# Without "domains", all of the program's TCP traffic goes through the tunnel.
 [[rule]]
 exe = "chrome.exe"
 domains = [

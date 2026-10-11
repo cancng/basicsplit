@@ -19,7 +19,7 @@ import (
 
 // errResolve means the peer endpoint's hostname could not be looked up,
 // which is usually temporary.
-var errResolve = errors.New("Endpoint cozulemedi")
+var errResolve = errors.New("could not resolve the Endpoint")
 
 // startTunnel reads a standard WireGuard .conf file and brings up a userspace
 // tunnel. No network adapter is created and no system routes are touched.
@@ -114,7 +114,7 @@ func startTunnel(confPath string) (*netstack.Net, error) {
 		return nil, err
 	}
 	if len(addrs) == 0 {
-		return nil, fmt.Errorf("%s icinde [Interface] Address yok", confPath)
+		return nil, fmt.Errorf("%s has no [Interface] Address", confPath)
 	}
 	if len(dns) == 0 {
 		dns = []netip.Addr{netip.MustParseAddr("1.1.1.1")}
@@ -150,7 +150,7 @@ func keyToHex(b64 string) (string, error) {
 		return "", err
 	}
 	if len(raw) != 32 {
-		return "", fmt.Errorf("anahtar 32 bayt olmali")
+		return "", fmt.Errorf("a key must be 32 bytes")
 	}
 	return hex.EncodeToString(raw), nil
 }

@@ -48,7 +48,7 @@ func (p *proxy) handle(c net.Conn) {
 
 	var up net.Conn
 	if current.Load().matchDomain(host) {
-		log.Printf("TUNEL  %s", target)
+		log.Printf("TUNNEL  %s", target)
 		// hostname is resolved by the tunnel's DNS, so no DNS leak
 		up, err = p.tnet.DialContext(ctx, "tcp", target)
 	} else {
@@ -72,7 +72,7 @@ func socksHandshake(c net.Conn) (host string, port int, err error) {
 		return
 	}
 	if buf[0] != 5 {
-		return "", 0, fmt.Errorf("socks5 degil")
+		return "", 0, fmt.Errorf("not socks5")
 	}
 	if _, err = io.ReadFull(c, buf[:buf[1]]); err != nil {
 		return
@@ -87,7 +87,7 @@ func socksHandshake(c net.Conn) (host string, port int, err error) {
 	}
 	if buf[1] != 1 {
 		c.Write([]byte{5, 7, 0, 1, 0, 0, 0, 0, 0, 0})
-		return "", 0, fmt.Errorf("sadece CONNECT destekleniyor")
+		return "", 0, fmt.Errorf("only CONNECT is supported")
 	}
 	switch buf[3] {
 	case 1:
@@ -110,7 +110,7 @@ func socksHandshake(c net.Conn) (host string, port int, err error) {
 		}
 		host = net.IP(buf[:16]).String()
 	default:
-		return "", 0, fmt.Errorf("bilinmeyen adres tipi")
+		return "", 0, fmt.Errorf("unknown address type")
 	}
 	if _, err = io.ReadFull(c, buf[:2]); err != nil {
 		return

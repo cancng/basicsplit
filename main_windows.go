@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"log"
 	"os"
 	"path/filepath"
@@ -32,7 +33,7 @@ func elevate(exe string) {
 	args, _ := windows.UTF16PtrFromString(windows.ComposeCommandLine(os.Args[1:]))
 	dir, _ := windows.UTF16PtrFromString(filepath.Dir(exe))
 	if err := windows.ShellExecute(0, verb, file, args, dir, windows.SW_SHOWNORMAL); err != nil {
-		fatal("Yonetici yetkisi alinamadi: %v", err)
+		fatal("Could not get administrator rights: %v", err)
 	}
 	os.Exit(0)
 }
@@ -49,7 +50,7 @@ func runUI(logPath string) {
 	waitForTaskbar()
 	systray.Run(func() { onReady(logPath) }, nil)
 	if !quitting.Load() {
-		log.Print("tray simgesi olusturulamadi, simgesiz devam ediliyor")
+		log.Print("could not create the tray icon, continuing without one")
 		select {}
 	}
 }
@@ -104,11 +105,50 @@ func waitForTaskbar() {
 		shellNotifyIcon.Call(nimDelete, uintptr(unsafe.Pointer(&nid)))
 		if ok != 0 {
 			if i > 0 {
-				log.Printf("tray %d sn sonra hazir oldu", i)
+				log.Printf("tray became ready after %d s", i)
 			}
 			return
 		}
 		time.Sleep(time.Second)
 	}
-	log.Print("tray 2 dakikada hazir olmadi")
+	log.Print("tray was not ready within 2 minutes")
+}
+
+func main() {
+	exe, err := os.Executable()
+	if err != nil {
+		fatal("%v", err)
+	}
+	exeDir := filepath.Dir(exe)
+
+	flag.StringVar(&cfgPath, "config", filepath.Join(exeDir, "basicsplit.toml"), "config file")
+	flag.BoolVar(&debug, "debug", false, "log every captured connection")
+	flag.Parse()
+	if cfgPath, err = filepath.Abs(cfgPath); err != nil {
+		fatal("%v", err)
+	}
+
+	logPath = filepath.Join(exeDir, "basicsplit.log")
+
+	elevate(exe)
+
+	if !singleInstance() {
+		showInfo("basicsplit is already running (look in the system tray).")
+		return
+	}
+
+	openLog()
+
+	cfg, err := loadConfig(cfgPath)
+	if err != nil {
+		fatal("Could not read the config: %v", err)
+	}
+	current.Store(cfg)
+	enabled.Store(true)
+
+	// the tunnel must not depend on the tray icon
+	go run()
+
+	runUI(logPath)
+	cleanup()
 }

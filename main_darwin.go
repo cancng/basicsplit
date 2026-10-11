@@ -1,155 +1,110 @@
 package main
 
 import (
+	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
-	"time"
 
-	"fyne.io/systray"
+	"github.com/BurntSushi/toml"
 	"golang.org/x/sys/unix"
 )
 
-// The program runs as two processes: the engine, as root, owns the tunnel
-// and the pf rules; the tray icon runs as the logged-in user, since a root
-// process has no business in the menu bar, and talks to the engine over a
-// socket.
-var engineMode = flag.Bool("engine", false, "root motoru olarak calis (tepsi bunu kendisi baslatir)")
+// On macOS this binary is only the engine: a root daemon that owns the
+// tunnel and the pf rules. The app in macos/ installs it, drives it over a
+// socket, and also runs it unprivileged to read and write the config file.
 
-func showError(msg string) { dialog(msg, "stop") }
-func showInfo(msg string)  { dialog(msg, "note") }
+// ownerUID is the user the app runs as; the control socket and the log
+// belong to them.
+var ownerUID int
 
-func dialog(msg, icon string) {
-	if *engineMode {
-		fmt.Fprintln(os.Stderr, msg) // nobody to show it to; it is in the log
-		return
+func setTrayState() {}
+
+// showError is how fatal reports: the engine keeps the message for the app
+// to pick up and then idles until it is told to stop, since fatal's callers
+// do not expect it to return.
+func showError(msg string) {
+	failure.CompareAndSwap(nil, &msg)
+	select {}
+}
+
+func main() {
+	printConfig := flag.Bool("print-config", false, "print the config file as JSON")
+	saveConfig := flag.Bool("save-config", false, "write the JSON on stdin to the config file")
+	flag.StringVar(&cfgPath, "config", "", "config file")
+	flag.StringVar(&logPath, "log", "", "log file")
+	flag.IntVar(&ownerUID, "uid", 0, "owner of the control socket")
+	flag.BoolVar(&debug, "debug", false, "log every captured connection")
+	flag.Parse()
+
+	var err error
+	switch {
+	case cfgPath == "":
+		err = errors.New("-config is required")
+	case *printConfig:
+		err = dumpConfig()
+	case *saveConfig:
+		err = storeConfig()
+	case os.Geteuid() != 0:
+		err = errors.New("the engine must run as root; the app installs it by itself")
+	default:
+		err = engine()
 	}
-	exec.Command("/usr/bin/osascript", "-e", fmt.Sprintf(
-		`display dialog %s with title "basicsplit" buttons {"Tamam"} default button 1 with icon %s`,
-		appleQuote(msg), icon)).Run()
-}
-
-func appleQuote(s string) string {
-	return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`
-}
-
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
-}
-
-// adminRun runs a shell command as root, after macOS asks for an
-// administrator password.
-func adminRun(script string) error {
-	out, err := exec.Command("/usr/bin/osascript", "-e",
-		"do shell script "+appleQuote(script)+" with administrator privileges").CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("%s", strings.TrimSpace(string(out)))
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
-	return nil
 }
 
-// elevate returns only in the engine. Otherwise this is the tray process,
-// which starts the engine as root and never returns.
-func elevate(exe string) {
-	if !*engineMode {
-		frontend(exe)
-		os.Exit(0)
+func dumpConfig() error {
+	cfg, err := loadConfig(cfgPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		cfg, err = &Config{}, nil
 	}
-	if os.Geteuid() != 0 {
-		fatal("-engine root olarak calismali")
+	if err != nil {
+		return err
 	}
+	return json.NewEncoder(os.Stdout).Encode(cfg)
+}
+
+func storeConfig() error {
+	var cfg Config
+	if err := json.NewDecoder(os.Stdin).Decode(&cfg); err != nil {
+		return err
+	}
+	// write a new file and swap it in, so the engine never reads half of one
+	f, err := os.CreateTemp(filepath.Dir(cfgPath), ".basicsplit-*.toml")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if err := toml.NewEncoder(f).Encode(&cfg); err != nil {
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), cfgPath)
+}
+
+func engine() error {
 	// the pf rules leave this group's sockets alone
 	if err := unix.Setegid(exemptGID); err != nil {
-		fatal("setegid: %v", err)
+		return err
 	}
-}
-
-var lockFile *os.File
-
-// lock reports false if another process holds the lock file.
-func lock(path string) bool {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	lock, err := os.OpenFile("/var/run/basicsplit.lock", os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
-		return true
+		return err
 	}
-	lockFile = f // the lock lives as long as the file stays open
-	return unix.Flock(int(f.Fd()), unix.LOCK_EX|unix.LOCK_NB) == nil
-}
-
-// singleInstance reports false if another engine is already running.
-func singleInstance() bool {
-	return lock("/var/run/basicsplit.lock")
-}
-
-// runUI is the engine's side of the socket; the icon is in the tray process.
-func runUI(logPath string) {
-	fatal("kontrol soketi: %v", serveControl())
-}
-
-func frontend(exe string) {
-	// catch the usual mistake here, where it can be shown
-	if _, err := loadConfig(cfgPath); err != nil {
-		fatal("Config okunamadi: %v", err)
+	if unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB) != nil {
+		return errors.New("the engine is already running")
 	}
-	if !lock(filepath.Join(os.TempDir(), "basicsplit-tray.lock")) {
-		showInfo("basicsplit zaten calisiyor (menu cubuguna bak).")
-		return
+	if logPath != "" {
+		openLog()
+		os.Chown(logPath, ownerUID, -1)
 	}
-
-	if !pollEngine() {
-		cmd := shellQuote(exe) + " -engine -config " + shellQuote(cfgPath)
-		if debug {
-			cmd += " -debug"
-		}
-		// without the redirect osascript would wait for the engine to exit
-		if err := adminRun(cmd + " >/dev/null 2>&1 &"); err != nil {
-			if strings.Contains(err.Error(), "-128") {
-				return // the password prompt was cancelled
-			}
-			fatal("Motor baslatilamadi: %v", err)
-		}
-		for i := 0; !pollEngine(); i++ {
-			if i == 50 {
-				fatal("Motor baslamadi. Ayrintilar: %s", logPath)
-			}
-			time.Sleep(200 * time.Millisecond)
-		}
-	}
-
-	go func() {
-		for misses := 0; misses < 3; {
-			time.Sleep(2 * time.Second)
-			if pollEngine() {
-				misses = 0
-			} else {
-				misses++
-			}
-		}
-		if !quitting.Load() {
-			showError("basicsplit motoru durdu. Ayrintilar: " + logPath)
-		}
-		os.Exit(1)
-	}()
-	systray.Run(func() { onReady(logPath) }, nil)
-}
-
-// pollEngine copies the engine's state into this process for the tray icon.
-// It reports false if the engine does not answer.
-func pollEngine() bool {
-	return control("status") == nil
-}
-
-func setEnabled(on bool) {
-	cmd := "off"
-	if on {
-		cmd = "on"
-	}
-	control(cmd)
-}
-
-func stopEngine() {
-	control("quit")
+	return serveControl()
 }

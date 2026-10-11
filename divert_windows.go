@@ -67,15 +67,15 @@ type redirector struct {
 
 func startRedirector(tnet *netstack.Net) (*redirector, error) {
 	if err := windivert.Load(); err != nil {
-		return nil, fmt.Errorf("WinDivert.dll yuklenemedi (exe ile ayni klasorde olmali): %w", err)
+		return nil, fmt.Errorf("could not load WinDivert.dll (it must be next to the exe): %w", err)
 	}
 	filter, _ := windows.BytePtrFromString("outbound and !loopback and (tcp or udp.DstPort == 443)")
 	h, _, err := procDivertOpen.Call(uintptr(unsafe.Pointer(filter)), 0, 0, 0)
 	if windows.Handle(h) == windows.InvalidHandle {
 		if err == windows.ERROR_ACCESS_DENIED {
-			return nil, fmt.Errorf("WinDivert acilamadi: yonetici olarak calistirmalisin")
+			return nil, fmt.Errorf("could not open WinDivert: run as administrator")
 		}
-		return nil, fmt.Errorf("WinDivert acilamadi (WinDivert64.sys exe ile ayni klasorde mi?): %w", err)
+		return nil, fmt.Errorf("could not open WinDivert (is WinDivert64.sys next to the exe?): %w", err)
 	}
 
 	ln, err := net.Listen("tcp", ":0")

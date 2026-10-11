@@ -1,105 +1,116 @@
 # basicsplit
 
-Windows ve macOS için basit bir WireGuard split tunnel aracı. Sadece seçtiğin programların, sadece seçtiğin sitelere giden trafiğini VPN'den geçirir; geri kalan her şey normal bağlantından çıkar.
+A simple WireGuard split tunnel for Windows and macOS. Only the programs you pick, and only their traffic to the sites you pick, go through the VPN; everything else leaves over your normal connection.
 
-Örnek: sadece `chrome.exe` içinde ve sadece `wowhead.com` için VPN.
+Example: VPN only inside `chrome.exe`, and only for `wowhead.com`.
 
-## Nasıl çalışır (Windows)
+## How it works (Windows)
 
-- WireGuard tüneli program içinde kurulur (`wireguard-go` + netstack). Sanal ağ adaptörü oluşturulmaz, sistemin route tablosuna dokunulmaz.
-- WinDivert, kural listesindeki exe'lerin giden TCP bağlantılarını programın içindeki yerel bir dinleyiciye yönlendirir.
-- Dinleyici bağlantının ilk paketinden alan adını okur (TLS SNI veya HTTP Host). Alan adı listedeyse bağlantı tünelden, değilse doğrudan çıkar.
+- The WireGuard tunnel lives inside the program (`wireguard-go` + netstack). No virtual network adapter is created and the system's route table is left alone.
+- WinDivert redirects the outgoing TCP connections of the exes in the rule list to a local listener inside the program.
+- The listener reads the domain from the first packet of the connection (TLS SNI or HTTP Host). If the domain is on the list the connection goes through the tunnel, otherwise it goes out directly.
 
-## Kurulum (Windows)
+## Setup (Windows)
 
-1. [Go](https://go.dev/dl/) kur ve derle:
+1. Install [Go](https://go.dev/dl/) and build:
 
    ```
    build.bat
    ```
 
-2. [WinDivert 2.2.2](https://github.com/basil00/WinDivert/releases/tag/v2.2.2) paketini indir; `x64` klasöründeki `WinDivert.dll` ve `WinDivert64.sys` dosyalarını `basicsplit.exe`'nin yanına koy.
-3. VPN sağlayıcından aldığın WireGuard profilini (`.conf`) aynı klasöre koy.
-4. `basicsplit.example.toml` dosyasını `basicsplit.toml` adıyla kopyala, `wireguard` satırına profilinin adını yaz ve kurallarını düzenle.
-5. `basicsplit.exe`'yi çalıştır. Yönetici yetkisi ister (WinDivert için gerekli), sonra sistem tepsisine yerleşir.
+2. Download [WinDivert 2.2.2](https://github.com/basil00/WinDivert/releases/tag/v2.2.2) and put `WinDivert.dll` and `WinDivert64.sys` from its `x64` folder next to `basicsplit.exe`.
+3. Put the WireGuard profile (`.conf`) from your VPN provider in the same folder.
+4. Copy `basicsplit.example.toml` to `basicsplit.toml`, put your profile's name on the `wireguard` line and edit the rules.
+5. Run `basicsplit.exe`. It asks for administrator rights (WinDivert needs them) and then sits in the system tray.
 
-İlk çalıştırmada Windows Güvenlik Duvarı izin sorarsa izin ver; yakalanan bağlantılar programa gelen bağlantı olarak ulaşır.
+If Windows Firewall asks for permission on the first run, allow it; captured connections reach the program as incoming ones.
 
 ## macOS
 
-Tünel ve kural mantığı aynıdır; fark bağlantıların nasıl yakalandığındadır.
+The tunnel and the rules work the same way; the difference is in how connections are captured.
 
-### Nasıl çalışır
+### How it works
 
-- macOS'un paket filtresi `pf`, giden TCP bağlantılarını programın içindeki yerel dinleyiciye yönlendirir. `pf` programa göre ayrım yapamadığı için bütün programların bağlantıları yakalanır; kural listesinde olmayanlar olduğu gibi doğrudan çıkarılır.
-- Dinleyici, bağlantıyı açan programı bulur. Kuralı varsa alan adına bakar ve tüneli ya da doğrudan yolu seçer.
-- Kuralların hepsinde `domains` varsa sadece 80 ve 443 portları yakalanır; `domains`'siz bir kural varsa bütün portlar.
-- Program iki süreç olarak çalışır: tüneli ve `pf` kurallarını yöneten motor (root) ve menü çubuğundaki simge (kullanıcı).
+- `pf`, the macOS packet filter, redirects outgoing TCP connections to the local listener inside the program. `pf` cannot tell programs apart, so every program's connections are captured; those without a rule are passed on directly, untouched.
+- The listener finds the program that opened the connection. If it has a rule, the listener looks at the domain and picks the tunnel or the direct route.
+- If every rule has `domains`, only ports 80 and 443 are captured; if any rule has none, all ports are.
 
-### Kurulum
+### Setup
 
-1. [Go](https://go.dev/dl/) ve Xcode Command Line Tools (`xcode-select --install`) kur, sonra derle:
+With Homebrew:
 
-   ```
-   ./build.sh
-   ```
+```
+brew install --cask cancng/tap/basicsplit
+```
 
-2. WireGuard profilini (`.conf`) aynı klasöre koy.
-3. `basicsplit.example.toml` dosyasını `basicsplit.toml` adıyla kopyala ve düzenle. `exe` olarak uygulamanın adını yaz:
+Or from source, with [Go](https://go.dev/dl/) and Xcode installed:
 
-   ```toml
-   [[rule]]
-   exe = "Google Chrome"
-   domains = ["wowhead.com"]
-   ```
+```
+./build.sh
+```
 
-   Ad, uygulama paketiyle (`Google Chrome.app`) ya da çalıştırılabilir dosyanın adıyla (`curl`) eşleşir.
-4. `./basicsplit` ile çalıştır. Motoru başlatmak için yönetici parolası sorulur, sonra menü çubuğuna yerleşir.
+Then move `build/basicsplit.app` to `/Applications`.
 
-Menüdeki **Oturum açılışında başlat**, motoru açılışta parola sormadan başlatan bir LaunchDaemon ve simge için bir LaunchAgent kurar. Motor root olarak çalıştığından `basicsplit` dosyasını başkasının değiştiremeyeceği bir yerde tut.
+After that:
 
-### macOS'a özel sınırlamalar
+1. Open the app.
+2. On the first launch it asks for an administrator password once, to install its engine. The engine goes into `/Library/PrivilegedHelperTools` and is run by launchd; the password is not asked again unless an update changes the engine.
+3. Open **Settings** from the menu bar icon:
+   - In **General**, import your WireGuard profile (`.conf`).
+   - In **Rules**, add an app with `+` and list the sites that should go through the tunnel.
 
-- QUIC (UDP 443) sadece kuraldaki programlar için değil, herkes için reddedilir. `allow_quic = true` bunu kapatır.
-- Safari desteklenmez: trafiği Safari'nin kendisinden değil, sistemin ortak WebKit sürecinden çıkar.
-- AdGuard gibi ağ uzantıları arkasındaki programlar tanınır, ama uzantının kendi bağlantıları 1 saniye kadar gecikebilir.
-- Ana `pf` kural setini değiştiren başka bir VPN ya da güvenlik duvarı varsa program başlamaz.
-- Program çöker ve internet kesilirse kuralları elle kaldır: `sudo pfctl -a com.apple/basicsplit -F all`
+Changes apply within a few seconds; there is no save button.
 
-Sorun ararken `./basicsplit -debug` yakalanan her bağlantıyı, sahibini ve okunan alan adını loga yazar.
+Capturing stops when you quit the app. Settings are kept in `~/Library/Application Support/basicsplit/basicsplit.toml`, in the same format as on Windows; the log is at `~/Library/Logs/basicsplit.log`.
 
-## Kurallar
+### Layout
+
+- `basicsplit-engine`: the Go program in this repository. It runs as root and manages the tunnel and the `pf` rules.
+- `macos/`: the menu bar icon and the settings window (SwiftUI). It installs the engine and controls it over `/var/run/basicsplit.sock`.
+- `release.sh`: builds the signed and notarized release package and the Homebrew cask file.
+
+### Limitations specific to macOS
+
+- QUIC (UDP 443) is refused for everyone, not just for the programs in the rules. `allow_quic = true` turns that off.
+- Safari is not supported: its traffic comes from the system's shared WebKit process, not from Safari itself.
+- Programs behind a network extension such as AdGuard are recognized, but the extension's own connections can be delayed by up to a second.
+- The program does not start if another VPN or firewall has replaced the main `pf` ruleset.
+- If the program crashes and you lose connectivity, remove the rules by hand: `sudo pfctl -a com.apple/basicsplit -F all`
+
+## Rules
+
+On macOS the rules are edited in the Settings window; the file format below is for Windows.
 
 ```toml
-wireguard = "profil.conf"
+wireguard = "profile.conf"
 
 [[rule]]
 exe = "chrome.exe"
 domains = ["wowhead.com", "zamimg.com"]
 
 [[rule]]
-exe = "baska.exe"   # domains yoksa exe'nin tüm TCP trafiği tünelden geçer
+exe = "other.exe"   # without domains, all of the exe's TCP traffic goes through the tunnel
 ```
 
-- Bir alan adı alt alan adlarını da kapsar (`wowhead.com` → `www.wowhead.com`).
-- Dosyayı kaydedince kurallar birkaç saniye içinde yeniden yüklenir. `wireguard` ve `listen` değişiklikleri için programı yeniden başlat.
+- A domain also covers its subdomains (`wowhead.com` → `www.wowhead.com`).
+- Rules are reloaded a few seconds after you save the file. Restart the program for changes to `wireguard` and `listen`.
 
-## Tepsi menüsü
+## Tray menu (Windows)
 
-- **Aktif:** yakalamayı açar/kapatır. Kapalıyken açık bağlantılar kopmaz.
-- **Windows ile başlat:** oturum açılışında UAC sormadan başlaması için Görev Zamanlayıcı'da bir görev oluşturur. (macOS'ta: **Oturum açılışında başlat**)
-- **Kuralları düzenle / Logu göster:** `basicsplit.toml` ve `basicsplit.log` dosyalarını açar.
+- **Enabled:** turns capturing on and off. Open connections are not cut when you turn it off.
+- **Start with Windows:** creates a Task Scheduler task so the program starts at logon without a UAC prompt.
+- **Edit Rules / Show Log:** open `basicsplit.toml` and `basicsplit.log`.
 
-## Sınırlamalar
+## Limitations
 
-Aksi belirtilmedikçe Windows içindir; ilk ve üçüncü madde macOS için de geçerlidir.
+These are about Windows unless noted; the first and the third also apply to macOS.
 
-- Sadece TCP tünellenir. UDP kullanan programlar (çoğu oyun) desteklenmez.
-- Kural listesindeki exe'lerin QUIC (UDP 443) trafiği düşürülür; tarayıcı TCP'ye geçer.
-- Tarayıcı alan adını şifrelerse (ECH) site eşleşmez ve doğrudan çıkar. Chrome'da "Güvenli DNS kullan" ayarını kapatmak bunu önler.
-- Bazı anti-cheat sistemleri WinDivert sürücüsünden hoşlanmaz; oyun oynarken programı kapatmak daha güvenlidir.
+- Only TCP is tunneled. Programs that use UDP (most games) are not supported.
+- QUIC (UDP 443) traffic of the exes in the rule list is dropped; the browser falls back to TCP.
+- If the browser encrypts the domain (ECH), the site does not match and goes out directly. Turning off "Use secure DNS" in Chrome prevents this.
+- Some anti-cheat systems dislike the WinDivert driver; it is safer to quit the program while gaming.
 
-## Kullanılanlar
+## Built with
 
 - [wireguard-go](https://git.zx2c4.com/wireguard-go/)
 - [WinDivert](https://github.com/basil00/WinDivert)

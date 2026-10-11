@@ -33,12 +33,12 @@ func relay(c net.Conn, tnet *netstack.Net, rule *Rule, dst netip.AddrPort) {
 		host, peeked = sniffHost(c)
 		if host == "cloudflare-ech.com" {
 			echWarning.Do(func() {
-				log.Printf("UYARI: %s sifreli SNI (ECH) kullaniyor, alan adlari gorulemiyor. "+
-					"Tarayicida 'Guvenli DNS kullan' ayarini kapat.", rule.Exe)
+				log.Printf("WARNING: %s uses encrypted SNI (ECH), so domains cannot be seen. "+
+					"Turn off 'Use secure DNS' in the browser.", rule.Exe)
 			})
 		}
 		if debug {
-			log.Printf("DEBUG  %s  %s  host=%q  ilk %d bayt", rule.Exe, target, host, len(peeked))
+			log.Printf("DEBUG  %s  %s  host=%q  first %d bytes", rule.Exe, target, host, len(peeked))
 		}
 		if useTunnel = rule.match(host); useTunnel {
 			// let the tunnel's DNS resolve it
@@ -52,7 +52,7 @@ func relay(c net.Conn, tnet *netstack.Net, rule *Rule, dst netip.AddrPort) {
 	var up net.Conn
 	var err error
 	if useTunnel {
-		log.Printf("TUNEL  %s  %s", rule.Exe, target)
+		log.Printf("TUNNEL  %s  %s", rule.Exe, target)
 		up, err = tnet.DialContext(ctx, "tcp", target)
 	} else {
 		up, err = (&net.Dialer{}).DialContext(ctx, "tcp", target)

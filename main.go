@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -15,17 +14,17 @@ import (
 )
 
 type Rule struct {
-	Exe     string   `toml:"exe"`
-	Domains []string `toml:"domains"`
+	Exe     string   `toml:"exe" json:"exe"`
+	Domains []string `toml:"domains,omitempty" json:"domains"`
 }
 
 type Config struct {
-	WireGuard string `toml:"wireguard"`
-	Listen    string `toml:"listen"`
+	WireGuard string `toml:"wireguard" json:"wireguard"`
+	Listen    string `toml:"listen,omitempty" json:"listen"`
 	// AllowQUIC (macOS only) leaves UDP 443 alone. There it can only be
 	// refused for every program at once, not just the exes in the rules.
-	AllowQUIC bool   `toml:"allow_quic"`
-	Rules     []Rule `toml:"rule"`
+	AllowQUIC bool   `toml:"allow_quic,omitempty" json:"allow_quic"`
+	Rules     []Rule `toml:"rule" json:"rules"`
 }
 
 var (
@@ -89,9 +88,9 @@ func (c *Config) ruleForExe(name string) *Rule {
 func (c *Config) logRules() {
 	for _, rule := range c.Rules {
 		if len(rule.Domains) == 0 {
-			log.Printf("kural: %s -> tum TCP trafigi tunelden", rule.Exe)
+			log.Printf("rule: %s -> all TCP traffic through the tunnel", rule.Exe)
 		} else {
-			log.Printf("kural: %s -> %s", rule.Exe, strings.Join(rule.Domains, ", "))
+			log.Printf("rule: %s -> %s", rule.Exe, strings.Join(rule.Domains, ", "))
 		}
 	}
 }
@@ -113,48 +112,14 @@ func fatal(format string, args ...any) {
 	os.Exit(1)
 }
 
-func main() {
-	exe, err := os.Executable()
-	if err != nil {
-		fatal("%v", err)
-	}
-	exeDir := filepath.Dir(exe)
-
-	flag.StringVar(&cfgPath, "config", filepath.Join(exeDir, "basicsplit.toml"), "kural dosyasi")
-	flag.BoolVar(&debug, "debug", false, "yakalanan her baglantiyi logla")
-	flag.Parse()
-	if cfgPath, err = filepath.Abs(cfgPath); err != nil {
-		fatal("%v", err)
-	}
-
-	logPath = filepath.Join(exeDir, "basicsplit.log")
-
-	elevate(exe)
-
-	if !singleInstance() {
-		showInfo("basicsplit zaten calisiyor (sistem tepsisine bak).")
-		return
-	}
-
+// openLog sends the log to a file, starting it over once it gets large.
+func openLog() {
 	if st, err := os.Stat(logPath); err == nil && st.Size() > 1<<20 {
 		os.Remove(logPath)
 	}
 	if f, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
 		log.SetOutput(f)
 	}
-
-	cfg, err := loadConfig(cfgPath)
-	if err != nil {
-		fatal("Config okunamadi: %v", err)
-	}
-	current.Store(cfg)
-	enabled.Store(true)
-
-	// the tunnel must not depend on the tray icon
-	go run()
-
-	runUI(logPath)
-	cleanup()
 }
 
 // run brings everything up and then stays in the packet loop.
@@ -169,14 +134,14 @@ func run() {
 	// lookup. Anything else is a real error.
 	tnet, err := startTunnel(wgPath)
 	for errors.Is(err, errResolve) {
-		log.Printf("%v; 5 sn sonra tekrar denenecek", err)
+		log.Printf("%v; retrying in 5 s", err)
 		time.Sleep(5 * time.Second)
 		tnet, err = startTunnel(wgPath)
 	}
 	if err != nil {
-		fatal("Tunel baslatilamadi: %v", err)
+		fatal("Could not start the tunnel: %v", err)
 	}
-	log.Print("tunel hazir")
+	log.Print("tunnel ready")
 	tunnelUp.Store(true)
 	setTrayState()
 
@@ -184,7 +149,7 @@ func run() {
 	if cfg.Listen != "" {
 		p := &proxy{tnet: tnet}
 		go func() { fatal("SOCKS5: %v", p.listen(cfg.Listen)) }()
-		log.Printf("SOCKS5 %s uzerinde dinleniyor", cfg.Listen)
+		log.Printf("SOCKS5 listening on %s", cfg.Listen)
 	}
 
 	r, err := startRedirector(tnet)
@@ -211,12 +176,12 @@ func watchConfig(r *redirector) {
 		last = st.ModTime()
 		cfg, err := loadConfig(cfgPath)
 		if err != nil {
-			log.Printf("config hatali, eski kurallar gecerli: %v", err)
+			log.Printf("config is invalid, keeping the old rules: %v", err)
 			continue
 		}
 		current.Store(cfg)
 		r.forgetVerdicts()
-		log.Print("config yeniden yuklendi")
+		log.Print("config reloaded")
 		cfg.logRules()
 	}
 }
